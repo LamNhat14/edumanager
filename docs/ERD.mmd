@@ -1,0 +1,88 @@
+erDiagram
+    app_users ||--o{ app_sessions : sessions
+    app_users ||--o{ user_roles : roles
+    roles ||--o{ user_roles : members
+    roles ||--o{ role_permissions : grants
+    permissions ||--o{ role_permissions : actions
+    app_users o|--o{ audit_logs : actor
+    teachers o|--o| app_users : linked_account
+    students ||--o{ student_guardians : guardians
+    guardians ||--o{ student_guardians : children
+    students ||--o{ student_status_history : history
+    teachers ||--o{ teacher_subjects : qualifications
+    subjects ||--o{ teacher_subjects : subject
+    classes ||--o{ class_subjects : offers
+    subjects ||--o{ class_subjects : taught
+    rooms o|--o{ classes : default_room
+    class_subjects ||--o{ teacher_assignments : assignment_history
+    teachers ||--o{ teacher_assignments : teaches
+    students ||--o{ student_enrollments : enrolls
+    class_subjects ||--o{ student_enrollments : registrations
+    student_enrollments ||--o{ enrollment_terms : terms
+    student_enrollments ||--o{ enrollment_status_history : status_history
+    class_subjects ||--o{ class_subject_prices : price_versions
+    class_subjects ||--o{ class_subject_schedules : schedules
+    teacher_assignments ||--o{ class_subject_schedules : assigned
+    class_subject_schedules o|--o{ teaching_sessions : generates
+    class_subjects ||--o{ teaching_sessions : sessions
+    teachers ||--o{ teaching_sessions : actual_teacher
+    rooms o|--o{ teaching_sessions : location
+    teaching_sessions ||--o{ teaching_confirmations : attempts
+    combo_policies ||--o{ combo_policy_versions : versions
+    combo_policy_versions ||--o{ combo_policy_subjects : requirements
+    subjects ||--o{ combo_policy_subjects : eligible_subject
+    combo_policy_versions ||--o{ combo_policy_classes : class_scope
+    classes ||--o{ combo_policy_classes : eligible_class
+    combo_policy_versions ||--o{ combo_policy_grades : grade_scope
+    students ||--o{ invoices : billed
+    invoices ||--|{ invoice_items : lines
+    student_enrollments ||--o{ invoice_items : monthly_charge
+    class_subjects ||--o{ invoice_items : revenue_destination
+    class_subject_prices o|--o{ invoice_items : price_source
+    enrollment_terms o|--o{ invoice_items : terms_source
+    teacher_assignments o|--o{ invoice_items : service_assignment
+    invoice_items ||--o{ invoice_adjustments : adjustments
+    invoice_items ||--o{ invoice_discount_lines : discounts
+    combo_policy_versions o|--o{ invoice_discount_lines : snapshot_source
+    students ||--o{ payments : receipts
+    payments ||--o{ payment_allocations : allocated_cash
+    invoice_items ||--o{ payment_allocations : settled
+    payment_allocations ||--o{ allocation_reversals : reversed
+    students ||--o| student_credits : balance
+    students ||--o{ student_credit_transactions : credit_ledger
+    payments ||--o{ student_credit_transactions : original_cash
+    students ||--o{ refunds : refunds
+    refunds ||--|{ refund_allocations : refund_sources
+    payments ||--o{ refund_allocations : original_receipt
+    payment_allocations o|--o{ refund_allocations : original_allocation
+    refunds o|--o{ allocation_reversals : refund_reversal
+    teacher_assignments ||--o{ salary_policies : salary_versions
+    salary_policies ||--|{ salary_policy_components : components
+    salary_policies o|--o{ payment_allocations : locked_policy
+    payroll_periods ||--o{ payrolls : payrolls
+    teachers ||--o{ payrolls : payee
+    payrolls ||--o{ payroll_items : lines
+    salary_policy_components ||--o{ payroll_items : calculation
+    payroll_items ||--o{ payroll_item_sources : evidence
+    payment_allocations o|--o{ payroll_item_sources : revenue_source
+    allocation_reversals o|--o{ payroll_item_sources : negative_source
+    teaching_sessions o|--o{ payroll_item_sources : approved_work
+    payrolls ||--o{ payroll_adjustments : adjustments
+    payrolls ||--o{ payroll_payments : disbursements
+    expense_categories ||--o{ expenses : category
+    expenses ||--o{ expense_payments : disbursements
+    financial_periods ||--o{ financial_transactions : cash_period
+    app_users ||--o{ idempotency_requests : deduplication
+    app_users ||--o{ import_jobs : imports
+    import_jobs ||--o{ import_rows : validation
+    document_files ||--o{ import_jobs : source_file
+    app_users ||--o{ export_jobs : exports
+    document_files o|--o{ export_jobs : output_file
+
+%% Financial transaction source is a typed source reference enforced in RPC/trigger:
+%% payments / refunds / payroll_payments / expense_payments / other_income.
+%% Draft invoice may have zero items; issued invoice must have at least one.
+%% Refund sources are required before approval/execution.
+%% payroll_item_sources uses exactly one allocation/reversal/session per row.
+%% Scalar-only tables: login_attempts, center_settings, system_settings, backup_logs.
+%% Shared actor FKs and selected optional history links omitted for readability.

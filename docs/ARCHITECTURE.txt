@@ -1,0 +1,411 @@
+EDUMANAGER – TRUNG TÂM NHẬT NHƯ
+Khảo sát và thiết kế Giai đoạn 1
+Ngày: 24/11/2026 | Trạng thái: trình duyệt, chưa triển khai
+
+1. KẾT QUẢ KHẢO SÁT
+
+Đã đọc toàn bộ yêu cầu trong tệp Văn bản đã dán.txt. Phạm vi khảo sát là thư mục làm việc được cung cấp:
+C:\Users\lamnh\Documents\Codex\2026-11-24\files-pasted-by-the-user-master-2
+
+Trước khi tạo tài liệu, thư mục này chỉ có work và outputs, đều không có tệp. Không có package.json, mã nguồn, cấu hình Supabase, migration, tài liệu dự án hoặc AGENTS.md trong phạm vi khảo sát. Git báo đây không phải Git repository. Không có chức năng hiện hữu cần giữ lại. Chưa có URL repository khác được cung cấp; kết luận này không áp dụng cho các repository ở nơi khác.
+
+Hiện trạng: chưa có frontend, backend, database hoặc hệ thống chạy được trong workspace. Toàn bộ module trong yêu cầu cần được xây dựng. Chưa có thông tin kết nối Supabase hay GitHub để kiểm tra môi trường thực tế.
+
+Đầu ra giai đoạn này là bản thiết kế logic, ERD, hợp đồng API, ma trận quyền và kế hoạch nghiệm thu. Chưa tạo ứng dụng, chưa chạy migration và chưa triển khai dịch vụ. Không có dữ liệu học viên hoặc tài khoản mẫu được tạo.
+
+2. KIẾN TRÚC ĐỀ XUẤT
+
+Giữ kiến trúc React + TypeScript + Vite + Tailwind CSS; React Router, TanStack Query, React Hook Form và Zod. Thư viện UI chọn khi khởi tạo, theo tiêu chí accessibility và biểu mẫu tiếng Việt. Khóa phiên bản dependency trong lockfile sau khi kiểm tra tương thích; không tự chọn phiên bản chưa kiểm chứng.
+
+Luồng ứng dụng:
+Trình duyệt → HTTPS → Supabase Edge Functions → xác thực phiên → RBAC và phạm vi dữ liệu → PostgreSQL functions giao dịch → PostgreSQL.
+Edge Functions → Supabase Storage private để xử lý chứng từ, import và export.
+GitHub Actions → kiểm thử và build → GitHub Pages cho frontend; pipeline riêng cho migration và Edge Functions.
+
+Frontend không truy cập trực tiếp bảng nghiệp vụ. Supabase client phía trình duyệt chỉ dùng khóa công khai để gọi Functions; không dùng Supabase Auth. Dữ liệu báo cáo và file tải xuống đều đi qua kiểm tra quyền backend.
+
+Phân lớp:
+• UI: trang, form, bảng, trạng thái loading/empty/error; ẩn menu theo quyền để hỗ trợ trải nghiệm.
+• API client: gửi session token, request ID, idempotency key; chuẩn hóa lỗi và phân trang.
+• Edge: kiểm tra schema đầu vào, session, action permission, ownership; không tin actor_id/role từ client.
+• Domain: quy tắc học phí, combo, phân bổ, lương và trạng thái phê duyệt.
+• Database: khóa, constraint, transaction, snapshot và audit; là nơi bảo đảm tính nguyên tử.
+
+Một Edge Function router có các nhóm /v1/auth, /v1/academic, /v1/billing, /v1/payroll, /v1/finance, /v1/reports, /v1/admin. Có thể tách deployment theo nhóm sau này, nhưng không tạo nhiều dịch vụ độc lập ở MVP. Không tạo chức năng điểm danh học viên.
+
+Schema database:
+• app_private: các bảng nghiệp vụ và hàm nội bộ, không đưa vào exposed schemas.
+• app_api: các RPC cho Edge gọi bằng service role, cấp EXECUTE riêng cho từng hàm; không chứa bảng công khai.
+• Thu hồi quyền của PUBLIC, anon, authenticated trên bảng, sequence và function liên quan; thiết lập default privileges cho đúng role tạo migration.
+• Bật RLS trên bảng nghiệp vụ với mặc định từ chối client. Service role có thể bỏ qua RLS, nên RLS không thay thế kiểm tra quyền tại Edge và RPC.
+• RPC đặc quyền có search_path cố định, tên đối tượng đầy đủ, không SQL động từ input. Mọi RPC mutation nhận actor từ Edge và kiểm tra lại quyền hiện hành; caller client không được gọi RPC đó.
+
+Supabase khuyến nghị kiểm soát cả grants, exposed schemas và quyền EXECUTE của functions: https://supabase.com/docs/guides/api/securing-your-api
+
+GitHub Pages dùng HashRouter và Vite base theo tên repository để refresh đường dẫn không gặp 404. Giao diện công khai chỉ là mã tĩnh và màn hình đăng nhập; dữ liệu nội bộ được bảo vệ ở backend. Nếu cần cookie cùng site hoặc header bảo mật do server kiểm soát, đánh giá thêm hosting/proxy trước production, không âm thầm thay kiến trúc.
+
+3. XÁC THỰC VÀ AN TOÀN TRUY CẬP
+
+3.1. Phiên nội bộ
+
+Đề xuất bcrypt server-side với cost được benchmark trên Edge ở Giai đoạn 3; tối thiểu kiểm tra thư viện Deno tương thích và giới hạn đầu vào của bcrypt (72 byte UTF-8), không cắt mật khẩu ngầm. Có thể chuyển Argon2id nếu runtime và benchmark đáp ứng; không tự viết thuật toán hash.
+
+Token ngẫu nhiên 32 byte từ CSPRNG, mã hóa base64url; chỉ trả token một lần khi đăng nhập. Database lưu HMAC-SHA256(token, APP_SESSION_SECRET), key_version và metadata phiên, không lưu token thô. APP_SESSION_SECRET tách biệt service role key; xoay secret có quy trình thu hồi phiên.
+
+Đề xuất phiên tối đa 8 giờ, idle timeout 30 phút; đây là thông số chờ duyệt. Trình duyệt chỉ giữ token trong bộ nhớ, gửi Authorization: Bearer <opaque-token>. Refresh trang yêu cầu đăng nhập lại trong phương án ban đầu. Không lưu token trong URL, log hoặc localStorage. Khi cần duy trì đăng nhập qua refresh, thiết kế cookie HttpOnly cùng site/proxy riêng rồi kiểm tra CSRF; không dựa vào cookie bên thứ ba giữa GitHub Pages và Supabase.
+
+Endpoint custom-auth đặt verify_jwt=false vì token nội bộ không phải JWT Supabase. Điều này chỉ bỏ kiểm tra JWT của nền tảng; middleware session phải bảo vệ mọi route nghiệp vụ. Login là ngoại lệ công khai, có rate limit và kiểm tra mật khẩu server-side. Tài liệu cấu hình: https://supabase.com/docs/guides/functions/auth
+
+Mỗi request kiểm tra token hash, expires_at, idle timeout, revoked_at, trạng thái app_users và quyền hiện hành. Logout thu hồi phiên server-side. Khóa tài khoản, đổi/reset mật khẩu thu hồi toàn bộ phiên; thay đổi quyền có hiệu lực ngay. Không cho tự khóa hoặc gỡ vai trò Admin cuối cùng; khóa và kiểm tra trong cùng transaction để chống race.
+
+Giới hạn login theo tài khoản chuẩn hóa và IP bằng bộ đếm dùng chung có TTL; không dùng memory riêng mỗi Edge instance. Thông báo thất bại thống nhất để hạn chế dò username. Tạo dummy hash verification khi tài khoản không tồn tại; không log password/body đăng nhập. Có backoff và giới hạn request, tránh khóa vĩnh viễn bị lợi dụng gây từ chối dịch vụ.
+
+3.2. Admin đầu tiên
+
+Script quản trị chỉ chạy trong môi trường operator tin cậy, đọc secret và password qua input kín; không viết password vào command line, repository hoặc CI log. Transaction khóa bootstrap, xác nhận chưa có Admin rồi tạo user + role + audit. Chạy lại không tạo tài khoản thứ hai. Không mở endpoint bootstrap công khai. Tài khoản nhân viên do Admin tạo với mật khẩu tạm thời, bắt buộc đổi lần đầu; reset phải xác minh danh tính ngoài hệ thống và thu hồi phiên cũ.
+
+3.3. Bảo mật dữ liệu và file
+
+CORS allowlist origin frontend, không coi CORS là kiểm soát quyền. Chỉ nhận trường input được khai báo, chống mass assignment; query tham số hóa; giới hạn kích thước payload, trang, export và thời gian xử lý.
+
+Storage dùng bucket private. Backend tạo object key theo UUID, không dùng đường dẫn tùy ý từ client; giới hạn MIME, dung lượng, đuôi file và kiểm tra nội dung. Tải lên trạng thái quarantine/pending; xác nhận object thuộc request và quét trước khi cho xem. Signed URL thời hạn ngắn chỉ cấp sau khi kiểm tra quyền của bản ghi liên quan; URL vẫn dùng được đến hết hạn nên đặt TTL ngắn. Không public bucket chứa chứng từ.
+
+Audit ghi actor, action, entity, before/after đã loại thông tin bí mật, reason, timestamp, request_id. Không ghi password hash, session hash hoặc token. Log thay đổi nằm trong cùng transaction với nghiệp vụ; thất bại log thì rollback. Log đăng nhập thất bại lưu riêng, không cần actor tồn tại. Tài khoản ứng dụng không được update/delete audit; operator database vẫn có quyền hệ thống, cần backup và xuất log tách biệt để tăng khả năng phát hiện can thiệp.
+
+4. QUY ƯỚC DATABASE
+
+Đây là schema logic đủ để duyệt; DDL chạy được, policy và trigger được viết ở Giai đoạn 2 và các migration module tiếp theo.
+
+• PK mặc định id UUID. Bảng liên kết có UUID và UNIQUE cặp khóa ngoại.
+• FK kiểu UUID, mặc định ON DELETE RESTRICT với nghiệp vụ; không cascade xóa lịch sử tài chính.
+• Bảng mutable có created_at/updated_at timestamptz, created_by/updated_by → app_users và version integer để chống ghi đè đồng thời. Trường actor có thể null cho bootstrap/system đã định danh rõ.
+• Ledger bất biến có created_at, actor, effective_at và liên kết nguồn/đảo; không cập nhật bản ghi đã posted.
+• Tiền VND numeric(18,0), tỷ lệ numeric(9,6); dùng số thập phân chính xác ở backend. API trả số tiền dạng chuỗi để tránh mất chính xác JavaScript.
+• Thời điểm lưu timestamptz; kỳ học/kỳ lương dùng date là ngày đầu tháng. Múi giờ nghiệp vụ đề xuất Asia/Ho_Chi_Minh, cấu hình trong center_settings.
+• Khoảng hiệu lực [from,to), có thể không có ngày kết thúc; ngày kết thúc người dùng nhập được chuyển đổi rõ tại API.
+• Status dùng CHECK hoặc bảng mã với transition guard. Trạng thái paid/partial/overdue là kết quả từ số dư và hạn thanh toán, không để client tự đặt.
+• Mã học viên/phiếu thu dùng sequence sinh ở server và UNIQUE; không dùng MAX(code)+1, chấp nhận khoảng trống sequence.
+• Snapshot jsonb có schema_version, chỉ lưu cấu hình/chứng cứ bất biến; không dùng JSON thay thế FK nghiệp vụ.
+
+5. DANH MỤC BẢNG VÀ RÀNG BUỘC
+
+Ký hiệu: U = UNIQUE; FK thể hiện bằng dấu →; các trường NOT NULL là mặc định trừ trường có ghi tùy chọn. Trường chung ở mục 4 áp dụng, không lặp trong từng dòng.
+
+5.1. Tài khoản và quản trị
+
+app_users: username text U theo lower(trim), display_name text, password_hash text, status active/locked, must_change_password boolean, teacher_id UUID tùy chọn U → teachers, password_changed_at timestamptz.
+app_sessions: user_id → app_users, token_hash text U, key_version integer, expires_at, last_seen_at, revoked_at tùy chọn, user_agent text tùy chọn, ip_hash text tùy chọn. Index user_id và expiry; token hash không xuất API.
+roles: code text U, name text; có 5 vai trò theo yêu cầu.
+permissions: code text U, resource text, action text; ví dụ invoices.issue, refunds.approve.
+user_roles: user_id → app_users, role_id → roles, U(user_id,role_id).
+role_permissions: role_id → roles, permission_id → permissions, scope own/assigned/all, U(role_id,permission_id).
+audit_logs: actor_id → app_users tùy chọn, action, entity_type, entity_id UUID tùy chọn, before_data/after_data jsonb, reason, request_id, occurred_at. Index(entity_type,entity_id,occurred_at), (actor_id,occurred_at).
+login_attempts: account_key_hash, ip_hash, occurred_at, outcome; lưu có thời hạn phục vụ chống brute force.
+idempotency_requests: actor_id, operation, key, payload_hash, result_ref, response_code; U(actor_id,operation,key). Giao dịch tài chính giữ key lâu dài, không xóa sớm rồi cho phép thực hiện lại.
+
+5.2. Hồ sơ và lớp học
+
+students: code U, full_name, birth_date date tùy chọn, gender tùy chọn, grade smallint CHECK 6..12, school, phone, address, admission_date, status studying/paused/left, notes; các trường liên hệ có thể null. Không đặt phone UNIQUE vì anh chị em có thể dùng chung số phụ huynh.
+guardians: full_name, phone, email/address tùy chọn.
+student_guardians: student_id → students, guardian_id → guardians, relationship, is_primary; U cặp khóa, tối đa một người chính/học viên bằng partial unique.
+student_status_history: student_id, status, effective_at, reason, actor_id; hỗ trợ báo cáo học viên nghỉ/khôi phục theo thời gian.
+teachers: code U, full_name, birth_date, phone, email, address, started_on, status, notes; ngày sinh/email/địa chỉ/ghi chú tùy chọn.
+subjects: code U, name, active; Toán/Văn/Anh là danh mục cấu hình ban đầu được duyệt, không hardcode ở form nghiệp vụ.
+teacher_subjects: teacher_id → teachers, subject_id → subjects, U cặp khóa.
+rooms: code U, name, capacity integer >0, status.
+classes: code U, name, grade CHECK 6..12, capacity >0, start_date, end_date tùy chọn, default_room_id → rooms tùy chọn, status planned/active/closed; end_date >= start_date.
+class_subjects: class_id → classes, subject_id → subjects, status; U(class_id,subject_id). Danh sách học viên lớp tính DISTINCT student_id qua enrollment; sĩ số môn tính riêng.
+teacher_assignments: class_subject_id → class_subjects, teacher_id → teachers, valid_from/to, reason; không chồng thời gian giáo viên chính cho một lớp–môn. Dạy thay ở từng teaching_session được ghi rõ, không ghi đè phân công lịch sử.
+student_enrollments: student_id → students, class_subject_id → class_subjects, start_date, end_date tùy chọn, status active/paused/ended, transferred_from_id → student_enrollments tùy chọn.
+enrollment_status_history: enrollment_id → student_enrollments, status, valid_from/to, reason; lưu các khoảng tạm dừng để lập hóa đơn đúng kỳ quá khứ.
+enrollment_terms: enrollment_id → student_enrollments, valid_from/to, tuition_override numeric tùy chọn, discount_type none/fixed/percent, discount_value numeric, approved_by → app_users, reason. Phiên bản không chồng nhau; kiểm tra giới hạn discount theo loại.
+
+Một học viên có thể có nhiều enrollment, nhưng không được có hai khoảng đăng ký còn hiệu lực chồng nhau cùng class_subject. Khi khôi phục sau kết thúc tạo enrollment mới liên kết lịch sử; tạm dừng giữ enrollment và ghi history. Chuyển lớp đóng enrollment cũ và tạo mới trong một transaction, không đổi class_subject_id của dòng đã lập hóa đơn.
+
+5.3. Lịch học và xác nhận
+
+class_subject_schedules: class_subject_id, assignment_id → teacher_assignments, room_id → rooms tùy chọn, weekday smallint 1..7, start_time/end_time time, valid_from/to, timezone. end_time > start_time; MVP không dùng buổi qua nửa đêm.
+teaching_sessions: class_subject_id, schedule_id tùy chọn, teacher_id, assignment_id tùy chọn, room_id tùy chọn, starts_at/ends_at timestamptz, status scheduled/confirmed/pending/approved/rejected/cancelled, makeup_for_id → teaching_sessions tùy chọn, approved_minutes integer tùy chọn, approved_by/approved_at tùy chọn. U(schedule_id,starts_at) cho buổi sinh tự động; ends_at > starts_at.
+teaching_confirmations: session_id → teaching_sessions, attempt_no, teacher_id, submitted_at, actual_minutes, note, status draft/submitted/approved/rejected, reviewed_by/reviewed_at/reason tùy chọn; U(session_id,attempt_no).
+
+Luồng: scheduled → confirmed (giáo viên lưu xác nhận) → pending (gửi duyệt) → approved/rejected; rejected cho tạo attempt tiếp theo. Chỉ giáo viên được phân công buổi đó được xác nhận; giáo viên không tự duyệt. Hủy buổi đã tính lương tạo điều chỉnh, không xóa nguồn đã dùng.
+
+Database dùng exclusion constraint GiST theo teacher_id + tstzrange và room_id + tstzrange, và class_subject_id + tstzrange cho buổi chưa hủy. Có thể dùng btree_gist sau khi kiểm tra extension trên project. Khoảng [start,end) cho phép hai buổi tiếp giáp. Mẫu lịch được materialize trong cửa sổ xác định; kiểm tra xung đột cả lúc lập lịch lẫn khi sinh buổi tương lai, không tuyên bố bảo đảm vô hạn chỉ bằng mẫu lịch. Kiểm tra lịch nằm trong thời gian lớp hoạt động và giáo viên/phòng còn khả dụng.
+
+PostgreSQL hỗ trợ exclusion constraint để cấm khoảng thời gian chồng nhau: https://www.postgresql.org/docs/current/rangetypes.html
+
+5.4. Giá, combo và hóa đơn
+
+class_subject_prices: class_subject_id, valid_from/to, monthly_amount numeric >=0, reason; không chồng hiệu lực.
+combo_policies: code U, name, active.
+combo_policy_versions: policy_id → combo_policies, valid_from/to, discount_type fixed/percent, discount_value, cap_amount tùy chọn, same_class_required boolean, priority integer, stackable boolean, schema_version. CHECK 0..100 với phần trăm; không sửa phiên bản đã dùng.
+combo_policy_subjects: policy_version_id → combo_policy_versions, subject_id → subjects, U cặp khóa.
+combo_policy_classes: policy_version_id, class_id; U cặp khóa; rỗng nghĩa là mọi lớp.
+combo_policy_grades: policy_version_id, grade 6..12; U cặp khóa; rỗng nghĩa là mọi khối.
+invoices: number U, student_id, issue_date, due_date, status draft/issued/cancelled, gross_amount, discount_amount, net_amount, policy_snapshot jsonb, issued_by/at tùy chọn; net = gross - discount >=0.
+invoice_items: invoice_id → invoices, enrollment_id → student_enrollments, period_month date, class_subject_id, price_version_id → class_subject_prices tùy chọn, enrollment_term_id tùy chọn, assignment_id tùy chọn, gross_amount, discount_amount, net_amount, snapshot jsonb. U(enrollment_id,period_month); CHECK tháng là ngày đầu và net=gross-discount>=0.
+invoice_adjustments: invoice_item_id, kind debit/credit/cancel, amount >0, reason, requested_by, approved_by/at, posted_at, source_adjustment_id tùy chọn; ghi giảm nghĩa vụ học phí bằng credit, không sửa dòng gốc.
+invoice_discount_lines: invoice_item_id, combo_version_id tùy chọn, source_type, allocated_amount >=0, snapshot; bảo đảm tổng bằng discount_amount của item.
+
+FK/trigger xác nhận student trên invoice trùng student của enrollment, class_subject khớp enrollment. Header total bằng tổng item kiểm tra trong transaction và deferred constraint trigger; CHECK đơn giản không thể kiểm tra tổng nhiều hàng.
+
+U(enrollment_id,period_month) vẫn giữ sau hủy; phát hành lại qua điều chỉnh/chứng từ thay thế tham chiếu dòng gốc, không tạo nghĩa vụ học phí mới trùng khóa. Nếu nghiệp vụ yêu cầu hóa đơn thay thế độc lập, cần thêm billing_obligations và tách bản chứng từ trước khi triển khai, không gỡ UNIQUE để bỏ qua lỗi.
+
+5.5. Thu học phí, số dư và hoàn tiền
+
+payments: number U, student_id, amount >0, received_at, method cash/bank_transfer, external_reference tùy chọn, cashier_id → app_users, note, status posted; bản đã ghi nhận bất biến.
+payment_allocations: payment_id → payments, invoice_item_id → invoice_items, amount >0, allocated_at, salary_policy_version_id tùy chọn, assignment_id tùy chọn. Liên kết trực tiếp payment gốc ngay cả khi dùng số dư kỳ sau.
+allocation_reversals: allocation_id → payment_allocations, amount >0, reason, effective_at, refund_id tùy chọn; tổng đảo không vượt phân bổ gốc, không sửa giảm amount cũ.
+student_credits: student_id → students U, balance >=0, version; là tổng được cập nhật có khóa, đối soát bằng ledger; không cho sửa trực tiếp.
+student_credit_transactions: student_id, payment_id → payments, direction in/out, amount >0, source_type payment/allocation/reversal/refund, source_id UUID, occurred_at; U(source_type,source_id,direction) hoặc khóa tương đương để không hạch toán trùng. Liên kết nguồn kiểm tra bằng hàm và trigger.
+refunds: number U, student_id, amount >0, reason, requested_by, approved_by tùy chọn, status requested/approved/rejected/executed, approved_at/executed_at tùy chọn, external_reference tùy chọn, recognition_period_id tùy chọn.
+refund_allocations: refund_id → refunds, payment_id → payments, allocation_id → payment_allocations tùy chọn, amount >0; null allocation nghĩa là hoàn từ phần chưa phân bổ. Kiểm tra payment/student thống nhất.
+
+5.6. Lương
+
+salary_policies: assignment_id → teacher_assignments, valid_from/to, rounding_rule, reason; không chồng phiên bản trong một assignment.
+salary_policy_components: policy_id → salary_policies, type revenue_percent/per_session/per_hour/fixed_month, rate numeric >=0; phần trăm <=100, U(policy_id,type). Kết hợp là nhiều component, không tự cộng hai lần cùng component.
+payroll_periods: month date U, status open/review/closed, cutoff_at, approved_by/at, closed_by/at tùy chọn.
+payrolls: period_id → payroll_periods, teacher_id → teachers, gross_amount, adjustment_amount, net_amount, status draft/approved/closed; U(period_id,teacher_id).
+payroll_items: payroll_id → payrolls, assignment_id, policy_id, component_id, type, quantity numeric, rate, amount numeric, snapshot jsonb.
+payroll_item_sources: payroll_item_id → payroll_items, allocation_id hoặc reversal_id hoặc teaching_session_id, component_id, source_amount, recognized_amount; CHECK đúng một nguồn, UNIQUE(source,component_id) theo partial indexes. Nguồn fixed_month dùng UNIQUE(assignment_id,component_id,period_id) riêng.
+payroll_adjustments: payroll_id đích, original_payroll_id tùy chọn, amount có dấu, reason, source_ref, requested_by, approved_by/at; kỳ đích phải mở. Trường hợp thu hồi lương nhiều hơn lương kỳ mới cần công nợ giáo viên, không âm thầm cắt thành 0.
+payroll_payments: payroll_id, amount >0, paid_at, method, paid_by, reference tùy chọn; tổng trả không vượt số phải trả sau điều chỉnh đã duyệt.
+
+5.7. Thu chi, đóng kỳ và tệp
+
+expense_categories: code U, name, active.
+expenses: number U, category_id, amount >0, incurred_on, description, status draft/submitted/approved/rejected/cancelled, requested_by, approved_by/at tùy chọn. Không nhập lương thủ công nếu nguồn là payroll.
+expense_payments: expense_id → expenses, amount >0, paid_at, method, paid_by; tách chi phí phát sinh khỏi tiền đã chi, hỗ trợ trả nhiều lần.
+other_income: number U, amount >0, received_at, category/name, description, status draft/submitted/approved/posted/cancelled, created_by, approved_by/at; loại học phí không được nhập vào đây.
+financial_periods: start_date/end_date, status open/closed, closed_by/at, snapshot; không chồng khoảng.
+financial_transactions: source_type, source_id, event_type, direction in/out, amount >0, occurred_at, posting_date, financial_period_id, reversal_of tùy chọn; U(source_type,source_id,event_type). Chỉ sinh từ payment/refund/payroll_payment/expense_payment/other_income đã posted; không cho nhập độc lập.
+document_files: bucket, object_path U, checksum, size, mime, status, owner_entity_type/id, uploaded_by; xác nhận entity tồn tại và quyền qua backend.
+center_settings: tên, slogan, timezone, currency, receipt_prefix; một dòng cho trung tâm hiện tại.
+system_settings: key U, value jsonb, version; không lưu secret trong bảng cấu hình hiển thị cho frontend.
+backup_logs: started_at, finished_at tùy chọn, status, object_location tùy chọn, checksum tùy chọn, byte_count tùy chọn, verified_at tùy chọn, error tùy chọn. Không đặt success khi chỉ lên lịch mà chưa tạo artifact.
+import_jobs: uploader_id, document_id, status uploaded/validated/committed/failed, file_hash, mapping_version, validation_report, committed_at.
+import_rows: job_id, row_number, normalized_payload jsonb, errors jsonb; U(job_id,row_number).
+export_jobs: requester_id, type, filters jsonb, status, document_id tùy chọn, expires_at; kiểm tra lại quyền khi tải.
+
+5.8. Index và đồng thời
+
+Index mọi FK thường join; students(code), tên chuẩn hóa bằng trigram nếu extension hỗ trợ, phone chuẩn hóa; enrollment(student_id,status), enrollment(class_subject_id,status); invoice(student_id,due_date); item(period_month,class_subject_id); payment(student_id,received_at); allocation(invoice_item_id,allocated_at); teaching_session(teacher_id,starts_at); payroll(period_id,teacher_id); audit(entity_type,entity_id,occurred_at).
+
+Khóa theo thứ tự thống nhất: idempotency key → kỳ → số dư student → payment theo UUID → invoice item theo UUID → nguồn lương. Thu tiền, sử dụng credit, phân bổ, hoàn tiền, chốt kỳ dùng một RPC transaction; không ghép nhiều REST writes rồi hy vọng rollback được.
+
+Cho phép retry có giới hạn khi serialization/deadlock, giữ nguyên idempotency key. Optimistic version dùng cho sửa hồ sơ/cấu hình; xung đột trả 409 và yêu cầu tải lại, không ghi đè âm thầm.
+
+6. BẤT BIẾN TÀI CHÍNH VÀ QUY TRÌNH
+
+6.1. Phân bổ giảm giá
+
+Tính theo giá gốc từng dòng trong tập đủ điều kiện. Với giảm D và giá gốc g_i: raw_i = D*g_i/sum(g). Lấy floor từng raw_i, chia số đồng dư theo phần thập phân giảm dần; hòa thì theo khóa dòng ổn định. Tổng discount chính xác bằng D, từng dòng không âm sau giảm. Nếu sum(g)=0 thì D=0; từ chối cấu hình giảm vượt giá trị hợp lệ.
+
+Ví dụ từ yêu cầu: 500.000 + 450.000 + 500.000, giảm 150.000. Với thứ tự tie Toán trước Anh: giảm lần lượt 51.724, 46.552, 51.724; thành tiền 448.276, 403.448, 448.276; tổng 1.300.000. Đây là fixture kiểm thử, không phải dữ liệu production.
+
+Đề xuất không cộng dồn combo mặc định; chọn một chính sách đủ điều kiện có ưu tiên xác định. Giảm riêng và combo cần quy tắc thứ tự/cộng dồn được duyệt; hệ thống phải hiển thị từng khoản và snapshot. Vào/nghỉ giữa tháng chuyển hồ sơ sang cần quản lý xác nhận mức thu, không tự chia theo ngày.
+
+6.2. Lập hóa đơn
+
+Chọn tháng → lấy enrollment và khoảng hoạt động trong tháng → chọn phiên bản giá/terms/assignment → kiểm tra trường hợp giữa tháng → preview → quản lý duyệt ngoại lệ → issue trong transaction → tự dùng credit khả dụng → audit.
+
+Đề xuất chọn giá tại đầu kỳ, hoặc ngày bắt đầu enrollment nếu vào sau đầu kỳ; nếu thay đổi giá giữa tháng thì yêu cầu quản lý duyệt mức tháng đó. Không tự quyết công thức phân chia. Batch invoice khóa từng học viên; transaction từng học viên với kết quả thành công/lỗi rõ từng người và key để chạy lại, không báo tất cả thành công khi có lỗi. Một hóa đơn không ghi nhận dở dang.
+
+6.3. Thanh toán và credit
+
+Đề xuất khoản thanh toán một phần được phân bổ theo tỷ trọng công nợ còn lại của các dòng được chọn, áp dụng largest remainder. Các hóa đơn tự chọn theo due_date rồi issue_date/ID, nhưng kế toán được chọn thủ công; lưu rõ cách phân bổ. Chính sách này cần người dùng xác nhận.
+
+Trong transaction: ghi payment → credit IN toàn bộ tiền → allocation OUT từng phần gắn payment gốc → cập nhật credit balance → cập nhật trạng thái suy ra và audit → ghi dòng tiền đúng một lần.
+
+Khi hóa đơn kỳ mới được phát hành: khóa số dư học viên → dùng các payment còn dư theo received_at/ID → tạo allocation đến item → credit OUT; không tạo payment mới và không tăng dòng tiền.
+
+Với mỗi payment: P = A_net + R + U.
+P là tiền thu gốc; A_net là tổng allocation trừ reversal; R là tiền đã hoàn thực tế; U là tiền còn chưa phân bổ. Cả A_net, R, U không âm.
+Với item: nghĩa vụ hiệu lực = net gốc + debit adjustments - credit adjustments; công nợ = nghĩa vụ hiệu lực - allocations net, phải >=0.
+Credit student bằng tổng U mọi payment và bằng tổng credit ledger IN-OUT. Các điều kiện tổng nhiều dòng được kiểm tra dưới khóa cùng transaction và đối soát định kỳ.
+
+6.4. Hoàn tiền và hủy
+
+requested → approved/rejected → executed. Người yêu cầu và người duyệt khác nhau theo đề xuất kiểm soát hai người; Admin không bỏ qua bất biến số tiền. Phê duyệt và thực hiện là hai bước vì tiền chưa thực chi khi chỉ duyệt.
+
+Hoàn tiền đã phân bổ: khóa payment/item → tạo reversal tương ứng (credit IN) → ghi refund thực chi (credit OUT) → tạo cash out → xử lý điều chỉnh lương. Hoàn tiền dư: credit OUT từ payment chưa phân bổ. Tổng hoàn phải trong khả năng hoàn và không hoàn trùng cùng nguồn.
+
+Hoàn do thu nhầm nhưng học phí vẫn phải nộp: công nợ mở lại. Hoàn do hủy nghĩa vụ học phí: thêm credit adjustment được duyệt; không để hệ thống tự suy ra lý do hoàn đồng nghĩa xóa nợ. Hủy toàn bộ payment là hoàn đầy đủ có liên kết, không DELETE. Hủy hóa đơn đã có phân bổ cần đảo phân bổ về credit hoặc hoàn, đồng thời giảm nghĩa vụ theo chứng từ, trong transaction được kiểm tra.
+
+6.5. Doanh thu và lương
+
+Doanh thu chia lương chỉ lấy allocations net đến class_subject. Tiền chưa phân bổ, hóa đơn chưa thu không là căn cứ. Một allocation có policy/assignment snapshot để thay đổi tương lai không làm đổi lịch sử.
+
+Đề xuất cần duyệt: assignment và phiên bản tỷ lệ được xác định theo kỳ dịch vụ của invoice item; thời điểm phân bổ quyết định kỳ ghi nhận doanh thu và lương. Nhờ vậy thu nợ tháng cũ vẫn dùng cấu hình của dịch vụ cũ. Nếu trung tâm chọn tỷ lệ theo ngày thu, phải đổi quy tắc rõ trước Giai đoạn 6; không trộn hai cách. Đổi giáo viên giữa tháng phải có quyết định phân chia nguồn thu, không gán toàn bộ cho giáo viên hiện tại.
+
+Lương phần trăm = doanh thu phân bổ ròng được ghi nhận trong kỳ × tỷ lệ snapshot. Lương buổi chỉ lấy session approved; lương giờ lấy approved_minutes/60 bằng decimal. Fixed_month chỉ một lần cho mỗi assignment/component/kỳ; không lặp theo số buổi. Tổng lương kết hợp là tổng component hợp lệ + điều chỉnh được duyệt. Làm tròn VND ở đơn vị tính đã quy định và lưu phần chênh, không làm tròn tùy tiện ở nhiều tầng.
+
+Chốt kỳ khóa kỳ và nguồn, kiểm tra trùng payroll_item_sources, đối soát refund/allocations/buổi duyệt, lưu snapshot và audit. Kỳ closed bất biến. Hoàn tiền sau chốt tạo điều chỉnh âm ở kỳ mở, dùng tỷ lệ gốc; không sửa bảng lương hoặc cash payout cũ. Nếu giáo viên đã nghỉ, khoản thu hồi được theo dõi riêng và xử lý có phê duyệt.
+
+Kỳ tài chính cũng có khóa độc lập; không backdate posting_date vào kỳ đã đóng. Lưu occurred_at gốc và posting_date kỳ mở cho điều chỉnh muộn. Các RPC ghi tiền và chốt kỳ cùng khóa financial_periods để tránh giao dịch lọt vào sau snapshot.
+
+6.6. Báo cáo nhất quán
+
+• Học phí đã lập: tổng nghĩa vụ hiệu lực theo tháng dịch vụ.
+• Công nợ: nghĩa vụ trừ tiền phân bổ ròng, tại mốc báo cáo.
+• Dòng tiền học phí: payment received trong kỳ trừ refund executed trong kỳ, gồm cả tiền đóng trước.
+• Doanh thu thực thu theo lớp–môn: allocations trừ reversals theo kỳ ghi nhận phân bổ; báo cáo có thêm bộ lọc tháng dịch vụ để tránh hiểu nhầm.
+• Số dư trả trước: tiền chưa phân bổ tại mốc báo cáo, không phải doanh thu lớp–môn.
+• Lương phải trả: payroll đã duyệt/chốt trừ payouts và điều chỉnh hợp lệ; lương dự kiến hiển thị riêng.
+• Chi phí phát sinh: expenses đã duyệt + lương của kỳ; chi tiền: expense_payments + payroll_payments.
+• Lợi nhuận quản trị tạm tính đề xuất = doanh thu đã phân bổ + thu khác được ghi nhận - chi phí phát sinh - lương thuộc kỳ. Ghi rõ cơ sở tính; không gọi đây là lợi nhuận kế toán chuẩn khi chưa có chính sách ghi nhận đầy đủ.
+• Dòng tiền thuần = các dòng IN - OUT trong financial_transactions; không cộng payment lần nữa từ màn hình Thu chi, không cộng payroll expense và payout thành hai chi phí.
+
+7. API VÀ PHÂN QUYỀN
+
+7.1. Hợp đồng chung
+
+Base: /functions/v1/edumanager/v1. Session opaque trong Authorization; apikey công khai nếu lớp gateway yêu cầu. API không nhận service role từ trình duyệt.
+Response thành công: {data, meta:{requestId,nextCursor?}}; lỗi: {error:{code,message,fieldErrors?,requestId}}. 401 hết phiên, 403 không có quyền, 404 không tìm thấy/ngoài scope, 409 xung đột/đã chốt, 422 sai nghiệp vụ, 429 rate limit.
+GET phân trang cursor hoặc page có giới hạn, sort allowlist; q/filter kiểm tra ở server. Export dùng cùng truy vấn scope với GET.
+POST tài chính bắt buộc Idempotency-Key. Cùng actor/operation/key và payload trả cùng kết quả; khác payload trả 409. Database ghi key và kết quả cùng transaction nghiệp vụ; hai request đồng thời chờ cùng khóa, không thu hai lần.
+PATCH mutable cần version. Các trường amount/status/actor đặc quyền chỉ được đặt qua endpoint action cụ thể.
+
+7.2. Endpoint chính
+
+POST /auth/login: username,password → session token + expiresAt + user + permissions; công khai có rate limit.
+GET /auth/me; POST /auth/logout; POST /auth/change-password: phiên hợp lệ, đổi mật khẩu kiểm tra mật khẩu cũ.
+GET/POST /admin/users; PATCH /admin/users/:id; POST /admin/users/:id/lock|reset-password|revoke-sessions; PUT /admin/users/:id/roles: users.manage.
+GET/POST /students, /teachers, /classes, /rooms, /subjects; GET/PATCH /:resource/:id: quyền theo resource. Ngừng hoạt động bằng action, không xóa lịch sử.
+POST /classes/:id/subjects; POST /class-subjects/:id/assignments|prices: quyền học vụ hoặc cấu hình tài chính tương ứng.
+POST /enrollments; POST /enrollments/:id/pause|resume|end|transfer; POST /enrollments/:id/terms: terms override chỉ quản lý duyệt.
+GET/POST /schedules; POST /schedules/:id/generate; GET /teaching-sessions; POST /teaching-sessions/:id/confirm|submit|approve|reject|cancel.
+GET/POST /combo-policies; POST /combo-policies/:id/versions: fees.configure.
+POST /invoices/preview; POST /invoices/issue; POST /invoices/batch-issue; GET /invoices; POST /invoice-items/:id/adjustments: tách quyền issue và approve adjustment.
+POST /payments; POST /payments/:id/allocate; GET /students/:id/credits|debt|payments: billing.collect/allocate/view.
+POST /refunds; POST /refunds/:id/approve|reject|execute: tách yêu cầu, duyệt và thực chi.
+GET/POST /salary-policies; POST /payroll-periods/:id/calculate|approve|close; GET /payrolls; POST /payrolls/:id/adjustments|payments.
+GET/POST /expenses|other-income; POST /expenses/:id/submit|approve|reject|cancel|payments; POST /financial-periods/:id/close.
+GET /dashboard; GET /reports/:kind: quyền riêng từng loại, bộ lọc asOf/period/serviceMonth rõ nghĩa.
+POST /imports/students/validate; GET /imports/:id; POST /imports/:id/commit: xem trước rồi commit, ràng buộc uploader và quyền hiện hành.
+POST /exports; GET /exports/:id; POST /files/upload-ticket; POST /files/:id/finalize; GET /files/:id/download: kiểm tra resource owner.
+GET /audit-logs; GET/PATCH /settings: quyền quản trị, không trả secret.
+
+7.3. Ma trận quyền mặc định đề xuất
+
+Tác vụ                           Admin   Quản lý   Kế toán   Học vụ   Giáo viên
+Hồ sơ/lớp/đăng ký ghi sửa         Có      Có        Đọc tối   Có       Chỉ lớp được giao
+Danh mục môn/phòng/lịch           Có      Có        Đọc      Có       Lịch bản thân
+Cấu hình học phí/combo/override   Có      Có        Đọc      Không    Không
+Lập hóa đơn/thu/phân bổ           Có      Có        Có       Không    Không
+Yêu cầu hoàn/hủy                  Có      Có        Có       Không    Không
+Duyệt hoàn/hủy                    Có      Có        Không    Không    Không
+Thực hiện hoàn đã duyệt           Có      Có        Có       Không    Không
+Cấu hình lương                    Có      Có        Đọc      Không    Không
+Xác nhận buổi của bản thân        Theo gán giáo viên                       Có
+Duyệt buổi                        Có      Có        Không    Không    Không
+Lập bảng lương                    Có      Có        Có       Không    Không
+Duyệt/chốt lương và kỳ tài chính   Có      Có        Không    Không    Không
+Ghi trả lương đã duyệt            Có      Có        Có       Không    Không
+Lập phiếu thu chi                 Có      Có        Có       Không    Không
+Duyệt phiếu thu chi               Có      Có        Không    Không    Không
+Báo cáo tài chính                 Có      Có        Có       Không    Không
+Báo cáo học vụ                    Có      Có        Đọc tối   Có       Theo gán
+Lương bản thân                    Có      Có        Theo việc Không   Chỉ khi cấp quyền
+Tài khoản/role/settings           Có      Không     Không    Không    Không
+Audit                             Có      Theo scope Tài chính Không  Không
+Export                            Quyền riêng theo resource và scope, không tự cấp từ view
+
+“Đọc tối” là dữ liệu tối thiểu phục vụ thu phí, không toàn bộ hồ sơ nhạy cảm. Quyền của Quản lý đối với thu tiền và báo cáo học vụ của Kế toán là đề xuất cần duyệt. Mọi action còn kiểm tra phạm vi bản ghi và trạng thái; Admin không được sửa trực tiếp chứng từ đã chốt.
+
+Giáo viên: backend nối app_users.teacher_id, lọc teaching_sessions.teacher_id hoặc assignment được giao. Không nhận teacher_id của client làm điều kiện duy nhất. API trả DTO riêng, không kèm phí, số điện thoại phụ huynh hoặc thông tin giáo viên khác. Phê duyệt mặc định khác người yêu cầu; không cho tự duyệt chỉ vì có nhiều role.
+
+8. UI VÀ CẤU TRÚC MÃ NGUỒN DỰ KIẾN
+
+Sidebar 11 mục đúng yêu cầu, hiển thị theo permission; header tên trung tâm, tên người dùng, đăng xuất. Dashboard thay đổi theo role; giáo viên vào lịch cá nhân thay vì thấy số liệu tài chính. Số liệu trống hiển thị không có dữ liệu, không tự sinh số mẫu. Form thiếu Supabase hiển thị trạng thái chưa cấu hình.
+
+Bảng có lọc/tìm/sort/phân trang server-side. Drawer thêm/sửa có validation và xử lý xung đột version. Nghiệp vụ tiền có preview, lý do bắt buộc và xác nhận; nút pending khóa bấm lặp nhưng backend vẫn chống trùng. Trạng thái trên UI lấy từ server, không hiển thị thành công trước khi commit. Responsive cho điện thoại, bàn phím, nhãn form và định dạng ngày/tiền tiếng Việt.
+
+Cấu trúc đề xuất sau khi duyệt:
+src/app                 router, providers, session
+src/components          UI dùng chung
+src/features            students/classes/teachers/schedules/billing/payroll/finance/reports/admin
+src/lib                 api client, money/date, schema
+supabase/functions      router và middleware server
+supabase/migrations     DDL, grants, triggers, RPC có phiên bản
+supabase/tests          ràng buộc, quyền, giao dịch, race condition
+tests                   unit và end-to-end theo vai trò
+scripts                 bootstrap admin, import hỗ trợ, backup/restore
+docs                    architecture, ERD, API, vận hành, quyết định nghiệp vụ
+.github/workflows       CI, deploy frontend, deploy backend có gate môi trường
+
+Các file cấu hình ở Giai đoạn 2: .env.example, .gitignore, supabase/config.toml, cấu hình Vite/Tailwind/TypeScript, lockfile. .env.example gồm VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_APP_NAME=EduManager, VITE_CENTER_NAME=Trung tâm Nhật Như. SUPABASE_SERVICE_ROLE_KEY và APP_SESSION_SECRET chỉ ở môi trường backend; không đưa vào biến VITE_ hoặc artifact frontend. URL và khóa công khai thật bổ sung khi kết nối.
+
+9. RỦI RO VÀ ĐIỀU KIỆN KIỂM THỬ
+
+R1. Bỏ qua RLS bằng service role: test từng endpoint, RPC và Storage với anon, không token, token hết hạn, tài khoản khóa và ID người khác; mọi truy cập trái quyền phải bị chặn.
+R2. Thu tiền lặp/race: gửi đồng thời cùng key và hai key khác nhau tranh cùng công nợ; chỉ một kết quả hợp lệ, không âm credit hoặc phân bổ vượt.
+R3. Sai làm tròn: property tests tổng discount/phân bổ đúng tuyệt đối, số 0, giảm 100%, nhiều dòng đồng giá, số lớn; không float.
+R4. Học phí trùng: hai batch issue cùng enrollment/tháng; UNIQUE bảo vệ dù frontend không thấy invoice mới.
+R5. Hoàn tiền sai: hoàn một phần, nhiều lần, dư chưa phân bổ, nguồn đã trả lương; chặn vượt tiền và tự duyệt, tạo đảo và điều chỉnh đúng.
+R6. Lịch sử biến đổi: đổi giá/combo/giáo viên/tỷ lệ không đổi hóa đơn và lương cũ; kiểm tra thu nợ chậm sau đổi giáo viên.
+R7. Chốt kỳ đua giao dịch: close chạy đồng thời payment/refund/session approval; nguồn phải vào đúng một kỳ, không mất và không tính hai lần.
+R8. Trùng lịch: hai request đặt cùng phòng/giáo viên đồng thời; DB ngăn overlap, cho phép buổi tiếp giáp; sinh lịch retry không nhân bản.
+R9. Trùng thu chi: một payment/payout chỉ có một dòng tiền; báo cáo đối chiếu module nguồn và financial_transactions.
+R10. Import lỗi: dry run báo từng dòng; file trùng/cột sai/dữ liệu trùng; commit transaction toàn file trong giới hạn. Tệp lớn phải chia lô được xác nhận, báo tiến độ và kết quả rõ; không import một phần ngoài kiểm soát.
+R11. Excel formula injection: export ô bắt đầu =,+,-,@ như text khi là dữ liệu người dùng; import không chạy macro/formula.
+R12. Lộ dữ liệu export: cùng scope như bảng, kiểm tra lại trước download, private storage, hết hạn URL.
+R13. Backup không khôi phục được: dump có checksum, sao lưu object Storage riêng, restore ở môi trường cô lập, đối soát và diễn tập trước go-live. backup_logs chỉ phản ánh kết quả thật.
+R14. Sĩ số khi đăng ký đồng thời: transaction khóa lớp–môn, tính sĩ số tại ngày hiệu lực; cảnh báo vượt theo yêu cầu, chỉ override có quyền/lý do nếu chọn giới hạn cứng.
+
+10. KẾ HOẠCH TRIỂN KHAI VÀ CỔNG NGHIỆM THU
+
+GĐ1 – hiện tại: khảo sát, schema logic, ERD, API, RBAC, rủi ro và kế hoạch. Đầu ra để người dùng duyệt; không chạy migration.
+
+GĐ2 – nền tảng: khởi tạo repo/frontend/layout/routing; API wrapper; local Supabase; migration nền identity/academic, grants và helper audit; migrations module tài chính triển khai theo GĐ6–8. Kiểm tra build, migrate database rỗng, không truy cập anon, lỗi chưa cấu hình. Cần project Supabase dev để xác minh kết nối thật. Không coi UI hiển thị là kết nối thành công.
+
+GĐ3 – tài khoản: hash benchmark, bootstrap, login/logout/expiry/revoke, user management và RBAC/audit. Test quyền tất cả role, session giả/hết hạn, khóa user, hạ quyền giữa phiên, chống dò login. Đầu ra: đăng nhập nội bộ thực sự.
+
+GĐ4 – học vụ: CRUD hồ sơ/danh mục/lớp, enrollment nhiều môn/chuyển lớp, assignment có lịch sử, import/export Excel. Test người học nhiều môn không nhân bản, overlap enrollment, ghi đè version, import rollback, dữ liệu teacher scope.
+
+GĐ5 – lịch: lịch theo lớp/giáo viên/phòng, sinh buổi, học bù, xác nhận/gửi/duyệt/từ chối. Test conflict đồng thời, giới hạn lớp, resend, không tính lương buổi chưa approved. Không thêm điểm danh học viên.
+
+GĐ6 – học phí: price/combo version, invoice/adjustment, payments/allocation/credits/refunds, PDF phiếu thu. Chỉ bắt đầu sau khi chốt chính sách phân bổ và mốc tỷ lệ. Test số học, idempotency, race, hoàn tiền và đối soát P=A+R+U. Tất cả scenario phải pass trước dùng tiền thật.
+
+GĐ7 – lương: policy component riêng từng assignment, nguồn doanh thu/session, fixed/hybrid, thưởng/phạt, duyệt/chốt, payouts và PDF. Test không tính nguồn hai lần, late refund, backdate, cố sửa kỳ đóng, lương cố định không nhân theo buổi.
+
+GĐ8 – thu chi/báo cáo: expenses và payouts tách biệt, other income, financial ledger/close, dashboard phân loại, lọc/export. Đối soát tổng thu/chi/công nợ/credit/lương về nguồn; kiểm tra bộ lọc ngày dịch vụ và ngày ghi nhận.
+
+GĐ9 – production: E2E theo role, kiểm thử bảo mật, responsive, migration từ bản trước, backup/restore thử, build/secret scan, CI/CD, GitHub Pages, Functions, Storage; smoke test production bằng dữ liệu thật được người dùng cho phép. Không đưa fixture test lên production. Hoàn tất hướng dẫn cài đặt/Supabase/Admin đầu tiên/Actions/Pages/Functions/import/backup-restore và sử dụng từng role.
+
+Sau từng giai đoạn báo cáo: chức năng hoạt động, file thay đổi, migration viết và migration thực tế đã áp dụng riêng biệt, lệnh test/kết quả, lỗi còn tồn tại, thông tin cần cấu hình. Không chuyển tình trạng “chưa kiểm thử” thành “đạt”.
+
+Migration dự kiến: 0001_security_identity → 0002_academic → 0003_schedules → 0004_pricing_invoices → 0005_payments_credits_refunds → 0006_payroll → 0007_finance_reports → 0008_operations. Số migration có thể tách nhỏ; append-only sau khi deploy, sửa sai bằng forward migration. CI dựng database mới và test nâng cấp từ phiên bản trước. Rollback ứng dụng phải tương thích schema; migration phá hủy dữ liệu cần kế hoạch backup/restore riêng.
+
+Triển khai tách dev/staging/production; deploy backend và schema tương thích trước frontend. Chặn pipeline nếu unit/database/security tests hoặc build fail. CI dùng secrets qua môi trường bảo vệ, không in secrets. Giới hạn quyền GitHub Actions, không chạy workflow đặc quyền với code PR không tin cậy. Ghi nhận phiên bản ứng dụng/schema, request ID và lỗi đối soát để vận hành.
+
+11. NHỮNG ĐIỂM CẦN DUYỆT VÀ THÔNG TIN CẦN BỔ SUNG
+
+Không cần gửi password, service role key hoặc APP_SESSION_SECRET vào chat. Các giá trị này sẽ cấu hình trực tiếp trong Supabase Secrets hoặc môi trường quản trị ở giai đoạn tương ứng.
+
+Cần xác nhận để bắt đầu GĐ2:
+1) Dùng workspace trống hiện tại để tạo mới, hay có repository nguồn khác cần khảo sát?
+2) Chấp thuận kiến trúc và kế hoạch GĐ1; URL GitHub/project Supabase dev nếu đã có (có thể cung cấp khi kết nối).
+
+Cần chốt trước GĐ6–7, chưa cản việc làm nền tảng:
+• Thanh toán thiếu: FIFO theo hóa đơn rồi tỷ trọng dư nợ từng dòng hay kế toán chỉ định toàn bộ?
+• Tỷ lệ/giáo viên cho khoản thu muộn: theo kỳ dịch vụ như đề xuất hay theo ngày thu? Đổi giáo viên giữa tháng chia thế nào?
+• Combo có cộng dồn giảm riêng không, ưu tiên thế nào, combo áp dụng qua nhiều lớp ra sao?
+• Lương cố định là từng lớp–môn hay một khoản toàn giáo viên? Yêu cầu hiện tại được thiết kế theo từng assignment; nếu có lương toàn giáo viên cần thêm scope hợp đồng để tránh lặp.
+• Hai người yêu cầu/duyệt có phù hợp nhân sự trung tâm? Giáo viên có quyền xem lương bản thân mặc định không?
+• Quy định hạn nộp học phí, ngày chốt kỳ, khóa ghi lùi và thời điểm tự dùng credit cho tháng tương lai.
+• Sĩ số lớp tính số học viên duy nhất toàn lớp, sĩ số môn riêng; cảnh báo hay bắt buộc quản lý duyệt khi vượt?
+
+Cần trước production: domain/frontend URL, phương án phiên qua refresh, quy mô học viên/giao dịch/file, danh sách Admin thật, chính sách lưu trữ hồ sơ, mục tiêu backup RPO/RTO và nơi giữ backup. Đề xuất ban đầu RPO 24 giờ/RTO 4 giờ chỉ là mục tiêu để kiểm tra bằng diễn tập, không phải cam kết đã đạt.
+
+12. TÌNH TRẠNG BÀN GIAO GIAI ĐOẠN 1
+
+Đã thực hiện: khảo sát workspace; đọc yêu cầu; thiết kế kiến trúc, schema logic, ERD, API, RBAC, bất biến tài chính, rủi ro, kiểm thử và kế hoạch từng giai đoạn; đối chiếu tài liệu Supabase/PostgreSQL chính thức về auth/grants/range constraints.
+Tệp tạo: EduManager-Giai-doan-1.txt và EduManager-ERD.mmd trong outputs.
+Database migration đã thực hiện: không có; đúng phạm vi thiết kế.
+Kiểm thử ứng dụng: chưa có ứng dụng để chạy; chưa xác minh Supabase, hash runtime, DDL hoặc UI.
+Kiểm tra thiết kế: đối chiếu các bảng tối thiểu của yêu cầu, nguồn phân bổ/lương, phân tách cash/credit/debt, khóa chống trùng, quyền backend và các quyết định còn mở.
+Giới hạn: chưa có môi trường kết nối; schema cần được hiện thực hóa và kiểm thử transaction ở giai đoạn triển khai. Chưa được coi là sản phẩm production.
+
+Dừng tại đây theo yêu cầu Phần 15. Chỉ chuyển sang Giai đoạn 2 sau khi người dùng xác nhận.
